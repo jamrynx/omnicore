@@ -74,6 +74,8 @@ def _mock(agent: str, user: str) -> dict:
         return _mock_verification(docs)
     if agent == "arbitration":
         return _mock_arbitration(user)
+    if agent == "compliance":
+        return _mock_compliance(user)
     raise AIError(f"no mock for agent '{agent}'")
 
 
@@ -215,3 +217,28 @@ def _mock_arbitration(user: str) -> dict:
         "disputed_items": [],
         "required_actions": [],
     }
+
+
+def _mock_compliance(user: str) -> dict:
+    u = user.upper()
+    advisories = []
+    if "CERTIFICATE_OF_ORIGIN" not in u and "CERTIFICATE OF ORIGIN" not in u:
+        advisories.append({
+            "kind": "missing_typical_document", "severity": "attention",
+            "message": "China -> Zimbabwe machinery imports typically require a "
+                       "Certificate of Origin for preferential tariff treatment; "
+                       "the contract does not require one.",
+        })
+    advisories.append({
+        "kind": "corridor_formality", "severity": "info",
+        "message": "Zimbabwe applies exchange-control rules to foreign-currency "
+                   "payments; the buyer's bank will need supporting documents "
+                   "for the remittance — the evidence set here covers most of it.",
+    })
+    if "INSURANCE" not in u:
+        advisories.append({
+            "kind": "missing_typical_document", "severity": "info",
+            "message": "No marine/cargo insurance certificate is on file; FOB terms "
+                       "put transit risk on the buyer from the port of loading.",
+        })
+    return {"corridor": "China -> Zimbabwe", "advisories": advisories, "confidence": 82}

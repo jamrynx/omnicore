@@ -10,13 +10,14 @@ upload evidence documents -> AI review routes the transaction:
 Money only ever moves through the C++ engine. The AI routes; it never pays.
 Runs fully offline in mock mode until FIREWORKS_API_KEY is set (see app/ai.py).
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import engine_client as engine
 from .ai import mock_mode_active
-from .agents import arbitration_agent, contract_agent, verification_agent
+from .agents import (arbitration_agent, compliance_agent, contract_agent,
+                     verification_agent)
 
 app = FastAPI(title="OmniCore API", version="0.2")
 app.add_middleware(
@@ -121,8 +122,67 @@ async def upload_document(eid: str, body: UploadDocument):
     if not esc:
         raise HTTPException(404, "escrow not found")
     esc["documents"].append({"name": body.name, "text": body.text})
+    _evidence_changed(esc)
     esc["timeline"].append({"event": "document_uploaded", "detail": body.name})
     return {"documents": [d["name"] for d in esc["documents"]]}
+
+
+@app.delete("/escrows/{eid}/documents/{index}")
+async def remove_document(eid: str, index: int):
+    """Mistakes happen — documents can be removed until the escrow settles."""
+    esc = ESCROWS.get(eid)
+    if not esc:
+        raise HTTPException(404, "escrow not found")
+    if esc["released"]:
+        raise HTTPException(400, "escrow already settled — evidence is frozen")
+    if index < 0 or index >= len(esc["documents"]):
+        raise HTTPException(404, "document not found")
+    removed = esc["documents"].pop(index)
+    _evidence_changed(esc)
+    esc["timeline"].append({"event": "document_removed", "detail": removed["name"]})
+    return {"documents": [d["name"] for d in esc["documents"]]}
+
+
+def _evidence_changed(esc: dict):
+    """Evidence changed after a review -> that review no longer speaks for
+    the evidence. Ruling is kept for the audit trail but can't move money."""
+    if esc.get("review"):
+        esc["review_stale"] = True
+        esc["status"] = "LOCKED"
+
+
+@app.post("/escrows/{eid}/documents/file")
+async def upload_document_file(eid: str, file: UploadFile):
+    """Real-file upload: PDF (text extracted) or plain text."""
+    esc = ESCROWS.get(eid)
+    if not esc:
+        raise HTTPException(404, "escrow not found")
+    if esc["released"]:
+        raise HTTPException(400, "escrow already settled — evidence is frozen")
+    raw = await file.read()
+    name = (file.filename or "document").rsplit(".", 1)[0]
+    if (file.filename or "").lower().endswith(".pdf"):
+        try:
+            import io
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(raw))
+            text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        except Exception as e:
+            raise HTTPException(400, f"could not read PDF: {e}")
+        if not text:
+            raise HTTPException(400, "no extractable text — scanned PDFs need OCR "
+                                     "(on the roadmap); use a digital PDF or paste text")
+    else:
+        try:
+            text = raw.decode("utf-8", errors="replace").strip()
+        except Exception:
+            raise HTTPException(400, "unsupported file type — upload .pdf or .txt")
+    esc["documents"].append({"name": name, "text": text})
+    _evidence_changed(esc)
+    esc["timeline"].append({"event": "document_uploaded",
+                            "detail": f"{name} ({file.filename})"})
+    return {"documents": [d["name"] for d in esc["documents"]],
+            "extracted_chars": len(text)}
 
 
 @app.post("/escrows/{eid}/review")
@@ -139,14 +199,18 @@ async def run_review(eid: str):
         contract.get("release_conditions", []), esc["documents"]
     )
     ruling = await arbitration_agent.run(contract, verification)
+    # Advisory only — compliance never routes the transaction.
+    compliance = await compliance_agent.run(contract, esc["documents"])
 
     esc["review"] = {
         "contract_analysis": contract,
         "verification": verification,
         "arbitration": ruling,
+        "compliance": compliance,
     }
     outcome = ruling.get("decision", "PENDING")
     esc["status"] = outcome
+    esc["review_stale"] = False
     esc["timeline"].append({"event": "ai_review_completed", "detail": outcome})
 
     if outcome == "DISPUTE":
@@ -184,6 +248,9 @@ async def release(eid: str, body: Approve | None = None):
     review = esc.get("review")
     if not review:
         raise HTTPException(400, "run AI review before releasing")
+    if esc.get("review_stale"):
+        raise HTTPException(409, "evidence changed since the last review — "
+                                 "run the AI review again before settling")
 
     ruling = review["arbitration"]
     outcome = ruling.get("decision")
@@ -246,6 +313,35 @@ async def refund(eid: str, body: Approve):
                    "resolution_note": body.resolution_note or None},
     })
     return {"escrow_id": eid, "status": "REFUNDED"}
+
+
+class PreflightRequest(BaseModel):
+    contract_text: str
+    description: str = ""
+
+
+@app.post("/compliance/preflight")
+async def compliance_preflight(body: PreflightRequest):
+    """Pre-lock compliance check — runs BEFORE any money is locked.
+
+    Reads the contract, infers the corridor, and reports what the corridor
+    typically requires, what the contract is missing, and any red flags —
+    so gaps are fixed before funds lock, not discovered after.
+    The user decides whether to proceed; this informs, it doesn't rule.
+    """
+    if not body.contract_text.strip():
+        raise HTTPException(400, "contract_text is required")
+    contract = await contract_agent.run(body.contract_text)
+    compliance = await compliance_agent.run(contract, documents=[])
+    return {
+        "contract_summary": contract.get("summary"),
+        "parties": contract.get("parties"),
+        "release_conditions": contract.get("release_conditions", []),
+        "red_flags": contract.get("red_flags", []),
+        "corridor": compliance.get("corridor"),
+        "advisories": compliance.get("advisories", []),
+        "disclaimer": compliance.get("disclaimer"),
+    }
 
 
 @app.post("/demo/seed")

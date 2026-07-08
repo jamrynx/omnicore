@@ -22,6 +22,15 @@ document looks fine on its own. You are also the risk assessor: mark severity
 honestly (high = money should not move without a human), and note anything
 that could indicate fraud — without accusing anyone.
 
+Check these explicitly, they are classic fraud and error signals:
+- Party names spelled identically across ALL documents and the contract
+  (a one-letter difference in a company name is a HIGH severity discrepancy,
+  not a typo to forgive).
+- Document dates: anything dated after its use, expired relative to the
+  contract's deadlines, or inconsistent with the shipment window.
+- Reference numbers (contract number, invoice number) consistent where
+  documents cite each other.
+
 Return JSON with this shape:
 {
   "condition_results": [
