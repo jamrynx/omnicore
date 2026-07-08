@@ -78,6 +78,35 @@ async def create_escrow(body: CreateEscrow):
     return {"escrow_id": eid, "status": "LOCKED"}
 
 
+
+@app.get("/escrows")
+async def list_escrows():
+    """Summaries for the dashboard, newest first."""
+    out = []
+    for eid, esc in ESCROWS.items():
+        out.append({
+            "id": eid,
+            "buyer_id": esc["engine"]["buyer_id"],
+            "seller_id": esc["engine"]["seller_id"],
+            "created_at": esc["engine"]["created_at"],
+            "description": esc["description"],
+            "amount_cents": esc["engine"]["amount_cents"],
+            "status": esc["status"],
+            "documents": len(esc["documents"]),
+            "confidence": (esc["review"] or {}).get("arbitration", {}).get("confidence"),
+        })
+    return list(reversed(out))
+
+
+@app.get("/stats")
+async def stats():
+    """Engine totals for the dashboard cards."""
+    try:
+        return await engine.stats()
+    except engine.EngineError as e:
+        raise HTTPException(502, str(e))
+
+
 @app.get("/escrows/{eid}")
 async def get_escrow(eid: str):
     esc = ESCROWS.get(eid)
@@ -225,3 +254,66 @@ async def seed_demo():
     buyer = await engine.create_account("Bryn Industries", 50_000_000)   # $500k
     seller = await engine.create_account("Global Machinery Ltd", 0)
     return {"buyer": buyer, "seller": seller}
+
+DEMO_CONTRACT = """SALES CONTRACT — No. SC-2026-0341
+
+Buyer: Bryn Industries (Harare, Zimbabwe)
+Seller: Global Machinery Ltd (Shanghai, China)
+
+1. GOODS: 100 (one hundred) industrial lathe machines, model GM-440.
+2. PRICE: USD 250,000.00 total, held in escrow at contract signing.
+3. DELIVERY: FOB Shanghai Port no later than June 15, 2026.
+4. INSPECTION: Goods must pass third-party inspection by an accredited inspection company; a signed Inspection Report is required.
+5. CUSTOMS: Seller provides export customs clearance documentation.
+6. RELEASE OF FUNDS: Escrowed funds are released to Seller only when all of the following are evidenced: (a) Bill of Lading confirming shipment of all 100 units, (b) passed Inspection Report, (c) Commercial Invoice matching the contract price, (d) export customs clearance certificate.
+7. DISPUTES: Any discrepancy suspends release pending review."""
+
+DEMO_DOCS = {
+    "invoice_clean": {"name": "Commercial_Invoice",
+        "text": "COMMERCIAL INVOICE #GM-4411\nSeller: Global Machinery Ltd | Buyer: Bryn Industries\nGoods: 100 x industrial lathe machine GM-440\nTotal: USD 250,000.00 | Terms: FOB Shanghai\nDate: June 10, 2026 | Signed: L. Wei, Sales Director"},
+    "invoice_mismatched": {"name": "Commercial_Invoice",
+        "text": "COMMERCIAL INVOICE #GM-4412\nSeller: Global Machinery Ltd | Buyer: Bryn Industries\nGoods: 80 x industrial lathe machine GM-440\nTotal: USD 250,000.00 | Terms: FOB Shanghai\nDate: June 10, 2026 | Signed: L. Wei, Sales Director"},
+    "bill_of_lading": {"name": "Bill_of_Lading",
+        "text": "BILL OF LADING #BL-88213\nCarrier: COSCO Shipping | Vessel: MV Ocean Harmony\nPort of loading: Shanghai | Port of discharge: Durban (transit to Harare)\nCargo: 100 crates, industrial lathe machines GM-440, gross 84,000 kg\nShipped on board: June 12, 2026 | Consignee: Bryn Industries"},
+    "inspection": {"name": "Inspection_Report",
+        "text": "INSPECTION REPORT #IR-5520 — PASSED\nInspector: SGS Shanghai | Date: June 11, 2026\nScope: 100 units GM-440 industrial lathes, contract SC-2026-0341\nResult: All 100 units conform to specification. PASSED.\nSigned: Chen Ming, Lead Inspector, SGS"},
+    "customs": {"name": "Customs_Certificate",
+        "text": "EXPORT CUSTOMS CLEARANCE CERTIFICATE #CC-901\nIssued by Shanghai Customs, June 13, 2026\nCargo: 100 crates GM-440 industrial lathe machines, contract SC-2026-0341\nStatus: CLEARED FOR EXPORT"},
+}
+
+
+async def _ensure_demo_accounts():
+    try:
+        await engine.get_account("ACC-1")
+    except engine.EngineError:
+        await engine.create_account("Bryn Industries", 50_000_000)
+        await engine.create_account("Global Machinery Ltd", 0)
+
+
+@app.post("/demo/scenario/{kind}")
+async def demo_scenario(kind: str):
+    """One click: seeds accounts, creates an escrow, uploads the right docs.
+
+    kind = clean    -> routes RELEASE after review
+    kind = pending  -> only the invoice uploaded, routes PENDING
+    kind = dispute  -> mismatched invoice (80 of 100), routes DISPUTE
+    """
+    docsets = {
+        "clean": ["invoice_clean", "bill_of_lading", "inspection", "customs"],
+        "pending": ["invoice_clean"],
+        "dispute": ["invoice_mismatched", "bill_of_lading", "inspection", "customs"],
+    }
+    if kind not in docsets:
+        raise HTTPException(400, "kind must be clean, pending, or dispute")
+    await _ensure_demo_accounts()
+    created = await create_escrow(CreateEscrow(
+        buyer_account="ACC-1", seller_account="ACC-2", amount_cents=25_000_000,
+        description=f"Purchase of 100 GM-440 industrial lathe machines ({kind} demo)",
+        contract_text=DEMO_CONTRACT,
+    ))
+    eid = created["escrow_id"]
+    for key in docsets[kind]:
+        d = DEMO_DOCS[key]
+        await upload_document(eid, UploadDocument(name=d["name"], text=d["text"]))
+    return {"escrow_id": eid, "scenario": kind,
+            "documents": [DEMO_DOCS[k]["name"] for k in docsets[kind]]}
