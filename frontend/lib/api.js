@@ -15,11 +15,20 @@ async function req(method, path, body) {
 
 export const api = {
   health: () => req("GET", "/health"),
+  stats: () => req("GET", "/stats"),
+  listEscrows: () => req("GET", "/escrows"),
+  refund: (id, approvedBy, note) =>
+    req("POST", `/escrows/${id}/refund`, { approved_by: approvedBy, resolution_note: note || "" }),
+  listEscrows: () => req("GET", "/escrows"),
+  demoScenario: (kind) => req("POST", `/demo/scenario/${kind}`),
+  refund: (id, approvedBy, note) =>
+    req("POST", `/escrows/${id}/refund`, { approved_by: approvedBy, resolution_note: note || "" }),
   seedDemo: () => req("POST", "/demo/seed"),
   createEscrow: (p) => req("POST", "/escrows", p),
   getEscrow: (id) => req("GET", `/escrows/${id}`),
   uploadDocument: (id, doc) => req("POST", `/escrows/${id}/documents`, doc),
   runReview: (id) => req("POST", `/escrows/${id}/review`),
-  release: (id, approvedBy) =>
-    req("POST", `/escrows/${id}/release`, approvedBy ? { approved_by: approvedBy } : undefined),
+  release: (id, approvedBy, note) =>
+    req("POST", `/escrows/${id}/release`,
+        approvedBy ? { approved_by: approvedBy, resolution_note: note || "" } : undefined),
 };
