@@ -18,11 +18,21 @@ export default function CreateEscrow() {
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [preflight, setPreflight] = useState(null);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const loadDemo = () =>
     setForm({ ...form, description: DEMO_DESCRIPTION, contract_text: DEMO_CONTRACT });
+
+  const runPreflight = async () => {
+    setBusy(true); setErr(null);
+    try {
+      if (!form.contract_text.trim()) throw new Error("Paste or load a contract first");
+      setPreflight(await api.preflight(form.contract_text, form.description));
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
 
   const submit = async () => {
     setBusy(true); setErr(null);
@@ -76,10 +86,43 @@ export default function CreateEscrow() {
               placeholder="Paste the contract here — the Contract Agent extracts release conditions from it"
               className="w-full rounded-md border border-surface-line bg-surface p-3 font-mono text-xs text-neutral-300 outline-none focus:border-signal/50" />
           </div>
+          {preflight && (
+            <div className="rounded-md border border-surface-line bg-surface p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wider text-neutral-500">
+                  Pre-lock compliance check — {preflight.corridor}
+                </span>
+                <span className="text-[10px] text-neutral-600">before any funds lock</span>
+              </div>
+              {preflight.red_flags?.length > 0 && preflight.red_flags.map((f, i) => (
+                <p key={"rf"+i} className="mb-1 text-xs text-warn">⚑ Contract: {f}</p>
+              ))}
+              {preflight.advisories?.map((adv, i) => (
+                <div key={i} className="flex gap-2 border-b border-surface-line py-1.5 last:border-0">
+                  <span className={`mt-0.5 text-xs ${adv.severity === "attention" ? "text-warn" : "text-neutral-500"}`}>
+                    {adv.severity === "attention" ? "!" : "i"}
+                  </span>
+                  <p className="text-xs leading-relaxed text-neutral-400">{adv.message}</p>
+                </div>
+              ))}
+              {(preflight.red_flags?.length ?? 0) === 0 && (preflight.advisories?.length ?? 0) === 0 && (
+                <p className="text-xs text-signal">No gaps found for this corridor.</p>
+              )}
+              <p className="mt-2 text-[10px] italic text-neutral-600">{preflight.disclaimer}</p>
+              <p className="mt-1 text-[10px] text-neutral-600">
+                Fix these in the contract now, or proceed if they don't apply to your deal.
+              </p>
+            </div>
+          )}
           {err && <p className="text-sm text-danger">{err}</p>}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-neutral-600">Funds lock in the escrow engine immediately.</p>
-            <Button onClick={submit} disabled={busy}>{busy ? "Locking funds…" : "Create & lock funds"}</Button>
+            <div className="flex shrink-0 gap-2">
+              <Button kind="ghost" onClick={runPreflight} disabled={busy}>
+                {preflight ? "Re-check compliance" : "Check compliance first"}
+              </Button>
+              <Button onClick={submit} disabled={busy}>{busy ? "Locking funds…" : "Create & lock funds"}</Button>
+            </div>
           </div>
         </div>
       </Card>

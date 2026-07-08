@@ -31,6 +31,7 @@ export default function EscrowDetail() {
   if (!esc) return <Shell id={id}><p className="text-sm text-neutral-500">Loading…</p></Shell>;
 
   const ruling = esc.review?.arbitration;
+  const stale = esc.review_stale;
   const settled = esc.status === "RELEASED" || esc.status === "REFUNDED";
 
   return (
@@ -46,6 +47,11 @@ export default function EscrowDetail() {
         </div>
       </div>
 
+      {stale && (
+        <div className="mb-4 rounded-md border border-warn/40 bg-warn/5 px-4 py-2 text-sm text-warn">
+          Evidence changed since the last review — run the AI review again before settling.
+        </div>
+      )}
       {notice && (
         <div className="mb-4 rounded-md border border-surface-line bg-surface-raised px-4 py-2 text-sm text-neutral-300">
           {notice}
@@ -94,7 +100,14 @@ function Documents({ esc, busy, act, settled }) {
           {esc.documents.map((d, i) => (
             <li key={i} className="flex items-center justify-between py-2">
               <span className="font-mono text-sm text-neutral-300">{d.name}</span>
-              <span className="text-xs text-neutral-600">{d.text.length} chars</span>
+              <span className="flex items-center gap-3">
+                <span className="text-xs text-neutral-600">{d.text.length} chars</span>
+                {!settled && (
+                  <button disabled={busy} title="Remove document"
+                    onClick={() => act(() => api.removeDocument(id, i), `Removed ${d.name}`)}
+                    className="text-xs text-neutral-600 transition hover:text-danger">✕</button>
+                )}
+              </span>
             </li>
           ))}
         </ul>
@@ -112,8 +125,19 @@ function Documents({ esc, busy, act, settled }) {
               </button>
             ))}
           </div>
+          <div className="mb-3">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-surface-line px-3 py-2 text-xs text-neutral-300 transition hover:border-signal/60 hover:text-signal">
+              <input type="file" accept=".pdf,.txt" className="hidden" disabled={busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) act(() => api.uploadFile(id, f), `Uploaded ${f.name}`);
+                  e.target.value = "";
+                }} />
+              Upload PDF or TXT file
+            </label>
+          </div>
           <details className="text-xs text-neutral-500">
-            <summary className="cursor-pointer hover:text-neutral-300">Upload custom document</summary>
+            <summary className="cursor-pointer hover:text-neutral-300">Paste document text manually</summary>
             <div className="mt-2 grid gap-2">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Document name"
                 className="rounded-md border border-surface-line bg-surface p-2 text-sm text-neutral-200 outline-none focus:border-signal/50" />
@@ -140,7 +164,7 @@ function Review({ esc }) {
       </p>
     </Card>
   );
-  const { contract_analysis: c, verification: v, arbitration: a } = r;
+  const { contract_analysis: c, verification: v, arbitration: a, compliance: k } = r;
   return (
     <Card title="AI review">
       <div className="mb-4 grid gap-2">
@@ -149,6 +173,7 @@ function Review({ esc }) {
           note={`${v.documents_reviewed?.length ?? 0} documents · ${v.discrepancies?.length ?? 0} discrepancies`}
           conf={v.confidence} />
         <Agent name="Arbitration Agent" note={a.decision} conf={a.confidence} />
+        {k && <Agent name="Compliance Agent" note={`${k.advisories?.length ?? 0} advisories · ${k.corridor}`} conf={k.confidence} />}
       </div>
 
       <div className="mb-4 rounded-md border border-surface-line bg-surface p-3">
@@ -167,6 +192,35 @@ function Review({ esc }) {
           );
         })}
       </div>
+
+      {c.red_flags?.length > 0 && (
+        <div className="mb-4 rounded-md border border-warn/30 bg-warn/5 p-3">
+          <div className="mb-1 text-xs uppercase tracking-wider text-warn">Contract red flags</div>
+          {c.red_flags.map((f, i) => (
+            <p key={i} className="text-xs leading-relaxed text-neutral-300">• {f}</p>
+          ))}
+        </div>
+      )}
+
+      {k?.advisories?.length > 0 && (
+        <div className="mb-4 rounded-md border border-surface-line bg-surface p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-xs uppercase tracking-wider text-neutral-500">
+              Compliance advisories — {k.corridor}
+            </div>
+            <span className="text-[10px] text-neutral-600">advisory only</span>
+          </div>
+          {k.advisories.map((adv, i) => (
+            <div key={i} className="flex gap-2 border-b border-surface-line py-1.5 last:border-0">
+              <span className={`mt-0.5 text-xs ${adv.severity === "attention" ? "text-warn" : "text-neutral-500"}`}>
+                {adv.severity === "attention" ? "!" : "i"}
+              </span>
+              <p className="text-xs leading-relaxed text-neutral-400">{adv.message}</p>
+            </div>
+          ))}
+          <p className="mt-2 text-[10px] italic text-neutral-600">{k.disclaimer}</p>
+        </div>
+      )}
 
       <div className="rounded-md border border-surface-line bg-surface p-3">
         <div className="mb-1 text-xs uppercase tracking-wider text-neutral-500">Arbitration ruling</div>

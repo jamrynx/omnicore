@@ -25,8 +25,19 @@ export const api = {
     req("POST", `/escrows/${id}/refund`, { approved_by: approvedBy, resolution_note: note || "" }),
   seedDemo: () => req("POST", "/demo/seed"),
   createEscrow: (p) => req("POST", "/escrows", p),
+  preflight: (contract_text, description) =>
+    req("POST", "/compliance/preflight", { contract_text, description }),
   getEscrow: (id) => req("GET", `/escrows/${id}`),
   uploadDocument: (id, doc) => req("POST", `/escrows/${id}/documents`, doc),
+  removeDocument: (id, index) => req("DELETE", `/escrows/${id}/documents/${index}`),
+  uploadFile: async (id, file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`${API}/escrows/${id}/documents/file`, { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `${r.status}`);
+    return data;
+  },
   runReview: (id) => req("POST", `/escrows/${id}/review`),
   release: (id, approvedBy, note) =>
     req("POST", `/escrows/${id}/release`,
