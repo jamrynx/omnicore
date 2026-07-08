@@ -80,8 +80,14 @@ A sales contract (100 GM-440 machines, USD 250,000, Shanghai → Harare) plus:
       double-release rejected), FastAPI orchestrator, three-agent pipeline
       with scenario-aware mock mode, all three outcomes verified end-to-end,
       dispute case-file assembly, frontend skeleton, demo data
-- [ ] Day 2 — persistence for escrow metadata + engine hardening
-- [ ] Day 3 — agents live on Fireworks AI, PDF text extraction
+- [x] Day 2 — golden-path UI: dashboard, create-escrow flow, escrow detail
+      (evidence upload, agent review panel, dispute case file, arbitrator
+      actions), one-click demo scenarios (clean / pending / dispute)
+- [x] Day 3 — PDF file upload with text extraction, Compliance Agent (4th
+      agent, corridor advisories — advisory only), contract red flags in UI,
+      PDF demo document set
+- [ ] Day 3b — agents live on Fireworks AI (waiting on credits; mock mode
+      covers everything until then)
 - [ ] Day 4 — golden-path UI (create → lock → evidence → route → settle)
 - [ ] Day 5 — integration, dispute demo, AMD/ROCm write-up
 - [ ] Day 6 — demo video + submission
