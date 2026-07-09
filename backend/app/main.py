@@ -10,6 +10,9 @@ upload evidence documents -> AI review routes the transaction:
 Money only ever moves through the C++ engine. The AI routes; it never pays.
 Runs fully offline in mock mode until FIREWORKS_API_KEY is set (see app/ai.py).
 """
+import hashlib
+import itertools
+
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -24,8 +27,9 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
-# --- Day-1 store: in-memory, keyed by engine escrow id. -----------------
+# --- In-memory store, keyed by OmniCore escrow id (OC-n). ----------------
 ESCROWS: dict[str, dict] = {}
+_seq = itertools.count(1)
 
 
 class CreateEscrow(BaseModel):
@@ -57,26 +61,86 @@ async def health():
 
 @app.post("/escrows")
 async def create_escrow(body: CreateEscrow):
+    """Buyer drafts the escrow. NO money moves yet — mutual assent first:
+    the seller reviews the contract and accepts; funds lock at acceptance."""
+    eid = f"OC-{next(_seq)}"
+    ESCROWS[eid] = {
+        "id": eid,
+        "engine": None,               # set when the seller accepts
+        "buyer_account": body.buyer_account,
+        "seller_account": body.seller_account,
+        "amount_cents": body.amount_cents,
+        "description": body.description,
+        "contract_text": body.contract_text,
+        "contract_hash": None,        # frozen at acceptance
+        "accepted_by": None,
+        "documents": [],
+        "messages": [],               # immutable transcript, part of the record
+        "review": None,
+        "status": "DRAFT",            # DRAFT -> LOCKED -> RELEASE|PENDING|DISPUTE -> RELEASED|REFUNDED
+        "case_file": None,
+        "released": False,
+        "timeline": [{"event": "draft_created",
+                      "detail": "awaiting seller review and acceptance"}],
+    }
+    return {"escrow_id": eid, "status": "DRAFT"}
+
+
+class AcceptContract(BaseModel):
+    accepted_by: str  # seller's name — goes in the audit trail
+
+
+@app.post("/escrows/{eid}/accept")
+async def accept_contract(eid: str, body: AcceptContract):
+    """Mutual assent: the seller accepts the exact contract text (frozen by
+    hash), and ONLY THEN do the buyer's funds lock in the engine."""
+    esc = ESCROWS.get(eid)
+    if not esc:
+        raise HTTPException(404, "escrow not found")
+    if esc["status"] != "DRAFT":
+        raise HTTPException(400, "contract already accepted")
     try:
         locked = await engine.lock_funds(
-            body.buyer_account, body.seller_account, body.amount_cents
+            esc["buyer_account"], esc["seller_account"], esc["amount_cents"]
         )
     except engine.EngineError as e:
         raise HTTPException(400, str(e))
+    esc["engine"] = locked
+    esc["status"] = "LOCKED"
+    esc["accepted_by"] = body.accepted_by
+    esc["contract_hash"] = hashlib.sha256(
+        esc["contract_text"].encode()).hexdigest()[:16]
+    esc["timeline"].append({"event": "contract_accepted",
+                            "detail": {"by": body.accepted_by,
+                                       "contract_hash": esc["contract_hash"]}})
+    esc["timeline"].append({"event": "funds_locked", "detail": locked})
+    return {"escrow_id": eid, "status": "LOCKED",
+            "contract_hash": esc["contract_hash"]}
 
-    eid = locked["id"]
-    ESCROWS[eid] = {
-        "engine": locked,
-        "description": body.description,
-        "contract_text": body.contract_text,
-        "documents": [],
-        "review": None,      # filled by /review
-        "status": "LOCKED",  # LOCKED -> RELEASE|PENDING|DISPUTE -> RELEASED|REFUNDED
-        "case_file": None,   # assembled on DISPUTE
-        "released": False,
-        "timeline": [{"event": "created_and_locked", "detail": locked}],
-    }
-    return {"escrow_id": eid, "status": "LOCKED"}
+
+class Message(BaseModel):
+    author: str
+    text: str
+
+
+@app.post("/escrows/{eid}/messages")
+async def send_message(eid: str, body: Message):
+    """Negotiation channel. Immutable — no edits, no deletions — and both
+    parties should know: on a dispute, the transcript is evidence."""
+    esc = ESCROWS.get(eid)
+    if not esc:
+        raise HTTPException(404, "escrow not found")
+    if esc["released"]:
+        raise HTTPException(400, "escrow settled — the record is frozen")
+    if not body.text.strip():
+        raise HTTPException(400, "empty message")
+    from datetime import datetime, timezone
+    esc["messages"].append({
+        "author": body.author.strip() or "unknown",
+        "text": body.text.strip(),
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    })
+    return {"messages": len(esc["messages"])}
 
 
 
@@ -87,11 +151,10 @@ async def list_escrows():
     for eid, esc in ESCROWS.items():
         out.append({
             "id": eid,
-            "buyer_id": esc["engine"]["buyer_id"],
-            "seller_id": esc["engine"]["seller_id"],
-            "created_at": esc["engine"]["created_at"],
+            "buyer_id": esc["buyer_account"],
+            "seller_id": esc["seller_account"],
             "description": esc["description"],
-            "amount_cents": esc["engine"]["amount_cents"],
+            "amount_cents": esc["amount_cents"],
             "status": esc["status"],
             "documents": len(esc["documents"]),
             "confidence": (esc["review"] or {}).get("arbitration", {}).get("confidence"),
@@ -191,6 +254,8 @@ async def run_review(eid: str):
     esc = ESCROWS.get(eid)
     if not esc:
         raise HTTPException(404, "escrow not found")
+    if esc["status"] == "DRAFT":
+        raise HTTPException(400, "the seller must accept the contract before review")
     if not esc["documents"]:
         raise HTTPException(400, "upload at least one document before review")
 
@@ -222,6 +287,7 @@ async def run_review(eid: str):
             "conditions": verification.get("condition_results", []),
             "documents": [d["name"] for d in esc["documents"]],
             "contract_summary": contract.get("summary", ""),
+            "transcript": list(esc["messages"]),
             "awaiting": "human arbitrator ruling (release or refund)",
         }
     elif outcome == "PENDING":
@@ -274,7 +340,7 @@ async def release(eid: str, body: Approve | None = None):
         )
 
     try:
-        settled = await engine.release_funds(eid)
+        settled = await engine.release_funds(esc["engine"]["id"])
     except engine.EngineError as e:
         raise HTTPException(400, str(e))
 
@@ -301,7 +367,7 @@ async def refund(eid: str, body: Approve):
     if esc["released"]:
         raise HTTPException(400, "already settled")
     try:
-        settled = await engine.refund_buyer(eid)
+        settled = await engine.refund_buyer(esc["engine"]["id"])
     except engine.EngineError as e:
         raise HTTPException(400, str(e))
     esc["released"] = True
@@ -408,6 +474,7 @@ async def demo_scenario(kind: str):
         contract_text=DEMO_CONTRACT,
     ))
     eid = created["escrow_id"]
+    await accept_contract(eid, AcceptContract(accepted_by="Global Machinery Ltd (demo auto-accept)"))
     for key in docsets[kind]:
         d = DEMO_DOCS[key]
         await upload_document(eid, UploadDocument(name=d["name"], text=d["text"]))
