@@ -14,6 +14,11 @@ export default function EscrowDetail() {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [role, setRole] = useState(null);
+  useEffect(() => {
+    const r = new URLSearchParams(window.location.search).get("as");
+    setRole(["buyer", "seller", "arbitrator"].includes(r) ? r : null);
+  }, []);
 
   const load = useCallback(() =>
     api.getEscrow(id).then((e) => { setEsc(e); setErr(null); })
@@ -33,16 +38,33 @@ export default function EscrowDetail() {
   const ruling = esc.review?.arbitration;
   const stale = esc.review_stale;
   const settled = esc.status === "RELEASED" || esc.status === "REFUNDED";
+  const draft = esc.status === "DRAFT";
 
   return (
     <Shell id={id}>
+      <div className="mb-4 flex items-center gap-2 text-[11px]">
+        <span className="text-neutral-600">Viewing as:</span>
+        {[null, "buyer", "seller", "arbitrator"].map((r) => (
+          <a key={r || "all"} href={`/escrows/${esc.id}${r ? `?as=${r}` : ""}`}
+            className={`rounded-full border px-2.5 py-0.5 transition ${
+              role === r ? "border-signal/60 text-signal" : "border-surface-line text-neutral-500 hover:text-neutral-300"}`}>
+            {r ? r : "all"}
+          </a>
+        ))}
+        {role && <span className="text-neutral-700">— open this URL in another browser for the other party</span>}
+      </div>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-mono text-xl text-neutral-100">{esc.engine.id}</h1>
+          <h1 className="font-mono text-xl text-neutral-100">{esc.id}</h1>
           <p className="text-sm text-neutral-500">{esc.description || "—"}</p>
+          {esc.contract_hash && (
+            <p className="text-[10px] text-neutral-600">
+              contract accepted by {esc.accepted_by} · sha256 {esc.contract_hash}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-lg tabular-nums text-neutral-200">{money(esc.engine.amount_cents)}</span>
+          <span className="text-lg tabular-nums text-neutral-200">{money(esc.amount_cents)}</span>
           <StatusBadge status={esc.status} />
         </div>
       </div>
@@ -60,11 +82,21 @@ export default function EscrowDetail() {
 
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="flex flex-col gap-6 lg:col-span-3">
-          <Documents esc={esc} busy={busy} act={act} settled={settled} />
-          <Review esc={esc} />
+          {draft && role !== "buyer" && <Acceptance esc={esc} busy={busy} act={act} />}
+          {draft && role === "buyer" && (
+            <Card title="Awaiting seller acceptance" className="border-surface-line">
+              <p className="text-sm text-neutral-400">
+                Your escrow draft is with the seller. Funds lock the moment they accept —
+                nothing moves until then.
+              </p>
+            </Card>
+          )}
+          {!draft && <Documents esc={esc} busy={busy} act={act} settled={settled || role === "buyer"} />}
+          {!draft && <Review esc={esc} />}
+          <Messages esc={esc} busy={busy} act={act} settled={settled} role={role} />
         </div>
         <div className="flex flex-col gap-6 lg:col-span-2">
-          <Actions esc={esc} ruling={ruling} busy={busy} act={act} settled={settled} />
+          <Actions esc={esc} ruling={ruling} busy={busy} act={act} settled={settled} draft={draft} role={role} />
           {esc.case_file && <CaseFile cf={esc.case_file} />}
           <Timeline items={esc.timeline} />
         </div>
@@ -87,7 +119,7 @@ function Shell({ id, children }) {
 function Documents({ esc, busy, act, settled }) {
   const [name, setName] = useState("");
   const [text, setText] = useState("");
-  const id = esc.engine.id;
+  const id = esc.id;
 
   const upload = (n, t) =>
     act(() => api.uploadDocument(id, { name: n, text: t }), `Uploaded ${n}`);
@@ -247,8 +279,21 @@ function Agent({ name, note, conf }) {
 
 // --- Actions ----------------------------------------------------------------
 
-function Actions({ esc, ruling, busy, act, settled }) {
-  const id = esc.engine.id;
+function Actions({ esc, ruling, busy, act, settled, draft, role }) {
+  const id = esc.id;
+  if (draft) return (
+    <Card title="Actions">
+      <p className="text-sm text-neutral-500">Waiting for the seller to review and accept the contract. Funds lock at acceptance.</p>
+    </Card>
+  );
+  if (role === "seller" && !settled) return (
+    <Card title="Actions">
+      <p className="text-sm text-neutral-500">
+        Upload evidence as it becomes available. The buyer (or the system) runs the
+        review; settlement follows the ruling.
+      </p>
+    </Card>
+  );
   const [who, setWho] = useState("");
   const [note, setNote] = useState("");
   const needsHuman = ruling && !ruling.auto_release_eligible;
@@ -276,7 +321,16 @@ function Actions({ esc, ruling, busy, act, settled }) {
           </Button>
         )}
 
-        {needsHuman && (
+        {needsHuman && role === "buyer" && (
+          <div className="rounded-md border border-surface-line bg-surface p-3 text-xs text-neutral-500">
+            {ruling.decision === "DISPUTE"
+              ? "In dispute — a neutral arbitrator will rule. The case file on the right is what they see."
+              : ruling.decision === "PENDING"
+              ? "Waiting for the seller to provide the missing evidence."
+              : "Awaiting human approval."}
+          </div>
+        )}
+        {needsHuman && role !== "buyer" && (
           <div className="rounded-md border border-surface-line bg-surface p-3">
             <div className="mb-2 text-xs text-neutral-500">
               {ruling.decision === "DISPUTE"
@@ -325,6 +379,84 @@ function CaseFile({ cf }) {
       <div className="mt-3 text-xs text-neutral-600">
         Evidence on file: {cf.documents?.join(", ")}
       </div>
+      {cf.transcript?.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-neutral-600">Message transcript (evidence)</div>
+          {cf.transcript.map((msg, i) => (
+            <p key={i} className="text-[11px] text-neutral-500">
+              <span className="text-neutral-400">{msg.author}:</span> {msg.text}
+            </p>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Acceptance({ esc, busy, act }) {
+  const [name, setName] = useState("");
+  return (
+    <Card title="Seller acceptance required" className="border-signal/30">
+      <p className="mb-1 text-sm text-neutral-300">
+        The buyer has drafted this escrow. No funds are locked yet.
+      </p>
+      <p className="mb-3 text-xs text-neutral-500">
+        Review the contract below; accepting freezes this exact text
+        (hash-stamped) and locks the buyer's {money(esc.amount_cents)} in the engine.
+      </p>
+      <pre className="mb-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-surface-line bg-surface p-3 font-mono text-xs text-neutral-400">
+        {esc.contract_text}
+      </pre>
+      <div className="flex gap-2">
+        <input value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="Your name (seller)"
+          className="flex-1 rounded-md border border-surface-line bg-surface p-2 text-sm text-neutral-200 outline-none focus:border-signal/50" />
+        <Button disabled={busy || !name}
+          onClick={() => act(() => api.accept(esc.id, name), "Contract accepted — funds locked")}>
+          Accept & lock funds
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function Messages({ esc, busy, act, settled, role }) {
+  const [author, setAuthor] = useState(
+    role === "buyer" ? "Bryn Industries" : role === "seller" ? "Global Machinery Ltd" : "");
+  const [text, setText] = useState("");
+  return (
+    <Card title="Messages"
+      right={<span className="text-[10px] text-neutral-600">immutable · part of the arbitration record</span>}>
+      {esc.messages?.length > 0 ? (
+        <ul className="mb-3 max-h-48 space-y-2 overflow-auto">
+          {esc.messages.map((msg, i) => (
+            <li key={i} className="rounded-md border border-surface-line bg-surface p-2">
+              <div className="mb-0.5 flex justify-between text-[10px] text-neutral-600">
+                <span className="font-medium text-neutral-400">{msg.author}</span>
+                <span>{msg.at}</span>
+              </div>
+              <p className="text-xs text-neutral-300">{msg.text}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mb-3 text-xs text-neutral-600">
+          No messages yet. Anything written here cannot be edited or deleted.
+        </p>
+      )}
+      {!settled && (
+        <div className="flex gap-2">
+          <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="Name"
+            className="w-28 rounded-md border border-surface-line bg-surface p-2 text-xs text-neutral-200 outline-none focus:border-signal/50" />
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message…"
+            onKeyDown={(e) => { if (e.key === "Enter" && author && text) { act(() => api.sendMessage(esc.id, author, text), "Message sent"); setText(""); } }}
+            className="flex-1 rounded-md border border-surface-line bg-surface p-2 text-xs text-neutral-200 outline-none focus:border-signal/50" />
+          <Button kind="ghost" disabled={busy || !author || !text}
+            onClick={() => { act(() => api.sendMessage(esc.id, author, text), "Message sent"); setText(""); }}>
+            Send
+          </Button>
+        </div>
+      )}
     </Card>
   );
 }

@@ -116,12 +116,12 @@ export default function CreateEscrow() {
           )}
           {err && <p className="text-sm text-danger">{err}</p>}
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-neutral-600">Funds lock in the escrow engine immediately.</p>
+            <p className="text-xs text-neutral-600">Creates a draft — funds lock when the seller accepts the contract.</p>
             <div className="flex shrink-0 gap-2">
               <Button kind="ghost" onClick={runPreflight} disabled={busy}>
                 {preflight ? "Re-check compliance" : "Check compliance first"}
               </Button>
-              <Button onClick={submit} disabled={busy}>{busy ? "Locking funds…" : "Create & lock funds"}</Button>
+              <Button onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create escrow draft"}</Button>
             </div>
           </div>
         </div>
