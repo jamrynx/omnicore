@@ -52,9 +52,13 @@ Return JSON with this shape:
 
 async def run(conditions: list[dict], documents: list[dict]) -> dict:
     """documents: [{"name": "Commercial_Invoice.pdf", "text": "..."}]"""
-    doc_blob = "\n\n".join(
-        f"=== DOCUMENT: {d['name']} ===\n{d['text']}" for d in documents
-    )
+    def header(d):
+        f = d.get("forensics")
+        if f and f.get("anomalies"):
+            return (f"=== DOCUMENT: {d['name']} (FORENSIC FLAGS, risk {f['risk_score']}: "
+                    + "; ".join(f["anomalies"]) + ") ===")
+        return f"=== DOCUMENT: {d['name']} ==="
+    doc_blob = "\n\n".join(f"{header(d)}\n{d['text']}" for d in documents)
     user = (
         "RELEASE CONDITIONS:\n" + json.dumps(conditions, indent=2) +
         "\n\nUPLOADED DOCUMENTS:\n" + doc_blob
