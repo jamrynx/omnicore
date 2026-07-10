@@ -35,13 +35,13 @@ export default function Dashboard() {
       )}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Card><Stat label="Active escrows" value={stats ? stats.escrows_active : "—"} /></Card>
-        <Card><Stat label="Funds locked" value={stats ? money(stats.total_locked_cents) : "—"} /></Card>
-        <Card><Stat label="Released" value={stats ? stats.escrows_released : "—"} /></Card>
-        <Card><Stat label="Refunded" value={stats ? stats.escrows_refunded : "—"} /></Card>
+        <Card><Stat label="Active escrows" value={stats ? stats.escrows_active : "—"} tone="text-neutral-100" /></Card>
+        <Card><Stat label="Funds locked" value={stats ? money(stats.total_locked_cents) : "—"} tone="text-signal" /></Card>
+        <Card><Stat label="Released" value={stats ? stats.escrows_released : "—"} tone="text-signal" /></Card>
+        <Card><Stat label="Refunded" value={stats ? stats.escrows_refunded : "—"} tone="text-warn" /></Card>
       </div>
 
-      <Card title="Escrows" right={<button onClick={load} className="text-xs text-neutral-500 hover:text-signal">refresh</button>}>
+      <Card title="Escrows — operator view (in production, parties see only their own deals)" right={<button onClick={load} className="text-xs text-neutral-500 hover:text-signal">refresh</button>}>
         {escrows.length === 0 ? (
           <div className="py-10 text-center text-sm text-neutral-500">
             No escrows yet. <Link className="text-signal hover:underline" href="/escrows/new">Create the first one</Link> —
@@ -75,10 +75,10 @@ export default function Dashboard() {
   );
 }
 
-function Stat({ label, value }) {
+function Stat({ label, value, tone = "text-neutral-100" }) {
   return (
     <div>
-      <div className="text-xl font-semibold tabular-nums text-neutral-100">{value}</div>
+      <div className={`text-xl font-semibold tabular-nums ${tone}`}>{value}</div>
       <div className="mt-1 text-xs text-neutral-500">{label}</div>
     </div>
   );

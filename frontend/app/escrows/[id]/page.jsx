@@ -24,6 +24,10 @@ export default function EscrowDetail() {
     api.getEscrow(id).then((e) => { setEsc(e); setErr(null); })
       .catch((e) => setErr(e.message)), [id]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(load, 4000);  // keep both party windows in sync
+    return () => clearInterval(t);
+  }, [load]);
 
   const act = async (fn, label) => {
     setBusy(true); setNotice(null);
@@ -82,18 +86,20 @@ export default function EscrowDetail() {
 
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="flex flex-col gap-6 lg:col-span-3">
-          {draft && role !== "buyer" && <Acceptance esc={esc} busy={busy} act={act} />}
-          {draft && role === "buyer" && (
-            <Card title="Awaiting seller acceptance" className="border-surface-line">
-              <p className="text-sm text-neutral-400">
-                Your escrow draft is with the seller. Funds lock the moment they accept —
-                nothing moves until then.
+          {draft && role !== "buyer" && <Acceptance esc={esc} busy={busy} act={act} role={role} />}
+          {draft && role === "buyer" && <ReviseDraft esc={esc} busy={busy} act={act} />}
+          {!draft && <Documents esc={esc} busy={busy} act={act} settled={settled || role === "buyer"} />}
+          {!draft && <Review esc={esc} />}
+          {(role !== "arbitrator" || esc.status === "DISPUTE" || esc.case_file) ? (
+            <Messages esc={esc} busy={busy} act={act} settled={settled} role={role} />
+          ) : (
+            <Card title="Messages">
+              <p className="text-xs text-neutral-600">
+                Party-to-party messages are private. The transcript becomes visible to
+                the arbitrator only if a dispute is raised.
               </p>
             </Card>
           )}
-          {!draft && <Documents esc={esc} busy={busy} act={act} settled={settled || role === "buyer"} />}
-          {!draft && <Review esc={esc} />}
-          <Messages esc={esc} busy={busy} act={act} settled={settled} role={role} />
         </div>
         <div className="flex flex-col gap-6 lg:col-span-2">
           <Actions esc={esc} ruling={ruling} busy={busy} act={act} settled={settled} draft={draft} role={role} />
@@ -133,6 +139,12 @@ function Documents({ esc, busy, act, settled }) {
             <li key={i} className="flex items-center justify-between py-2">
               <span className="font-mono text-sm text-neutral-300">{d.name}</span>
               <span className="flex items-center gap-3">
+                {d.forensics?.anomalies?.length > 0 && (
+                  <span title={d.forensics.anomalies.join("\n")}
+                    className="rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[10px] text-danger">
+                    forensics: {d.forensics.anomalies.length} flags
+                  </span>
+                )}
                 <span className="text-xs text-neutral-600">{d.text.length} chars</span>
                 {!settled && (
                   <button disabled={busy} title="Remove document"
@@ -198,7 +210,12 @@ function Review({ esc }) {
   );
   const { contract_analysis: c, verification: v, arbitration: a, compliance: k } = r;
   return (
-    <Card title="AI review">
+    <Card title="AI review" right={
+      <span className="text-xs text-neutral-500">overall confidence <span className="font-semibold text-signal">{a.confidence}%</span></span>
+    }>
+      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-surface">
+        <div className="h-full rounded-full bg-signal transition-all" style={{ width: `${a.confidence}%` }} />
+      </div>
       <div className="mb-4 grid gap-2">
         <Agent name="Contract Agent" note={`${c.release_conditions?.length ?? 0} release conditions extracted`} conf={c.confidence} />
         <Agent name="Verification & Risk Agent"
@@ -281,6 +298,10 @@ function Agent({ name, note, conf }) {
 
 function Actions({ esc, ruling, busy, act, settled, draft, role }) {
   const id = esc.id;
+  const [reviewing, setReviewing] = useState(false);
+  const [who, setWho] = useState("");
+  const [note, setNote] = useState("");
+  const needsHuman = ruling && !ruling.auto_release_eligible;
   if (draft) return (
     <Card title="Actions">
       <p className="text-sm text-neutral-500">Waiting for the seller to review and accept the contract. Funds lock at acceptance.</p>
@@ -294,10 +315,6 @@ function Actions({ esc, ruling, busy, act, settled, draft, role }) {
       </p>
     </Card>
   );
-  const [who, setWho] = useState("");
-  const [note, setNote] = useState("");
-  const needsHuman = ruling && !ruling.auto_release_eligible;
-
   if (settled) return (
     <Card title="Settlement">
       <p className="text-sm text-neutral-300">
@@ -309,10 +326,23 @@ function Actions({ esc, ruling, busy, act, settled, draft, role }) {
   return (
     <Card title="Actions">
       <div className="grid gap-3">
-        <Button disabled={busy || esc.documents.length === 0}
-          onClick={() => act(() => api.runReview(id), "AI review complete")}>
-          {esc.review ? "Run AI review again" : "Run AI review"}
+        <Button disabled={busy || reviewing || esc.documents.length === 0}
+          onClick={() => {
+            setReviewing(true);
+            act(() => api.runReview(id).finally(() => setReviewing(false)),
+                "AI review complete");
+          }}>
+          {reviewing ? "Agents at work…" : esc.review ? "Run AI review again" : "Run AI review"}
         </Button>
+        {reviewing && (
+          <div className="animate-pulse rounded-md border border-signal/30 bg-signal/5 p-3 text-xs text-signal">
+            <div className="mb-1 font-medium">AI agents reviewing this escrow…</div>
+            <div className="text-signal/70">
+              Contract Agent → Verification &amp; Risk → Compliance → Arbitration.
+              Live model calls — this can take up to a minute.
+            </div>
+          </div>
+        )}
 
         {ruling?.auto_release_eligible && (
           <Button disabled={busy}
@@ -393,8 +423,36 @@ function CaseFile({ cf }) {
   );
 }
 
-function Acceptance({ esc, busy, act }) {
-  const [name, setName] = useState("");
+function ReviseDraft({ esc, busy, act }) {
+  const [text, setText] = useState(esc.contract_text);
+  const [amount, setAmount] = useState(String(esc.amount_cents / 100));
+  const dirty = text !== esc.contract_text || Math.round(parseFloat(amount || "0") * 100) !== esc.amount_cents;
+  return (
+    <Card title="Your draft — awaiting seller acceptance">
+      <p className="mb-3 text-xs text-neutral-500">
+        Terms changed during negotiation? Revise here — the seller accepts the new
+        version. Once accepted, the contract is hash-frozen and can never change.
+      </p>
+      <label className="mb-1 block text-xs text-neutral-500">Amount (USD)</label>
+      <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number"
+        className="mb-3 w-40 rounded-md border border-surface-line bg-surface p-2 text-sm text-neutral-200 outline-none focus:border-signal/50" />
+      <label className="mb-1 block text-xs text-neutral-500">Contract text</label>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10}
+        className="mb-3 w-full rounded-md border border-surface-line bg-surface p-3 font-mono text-xs text-neutral-300 outline-none focus:border-signal/50" />
+      <Button disabled={busy || !dirty}
+        onClick={() => act(() => api.reviseDraft(esc.id, {
+          contract_text: text,
+          amount_cents: Math.round(parseFloat(amount) * 100),
+        }), "Draft revised — seller sees the new version")}>
+        Update draft
+      </Button>
+      {!dirty && <span className="ml-3 text-[10px] text-neutral-600">no changes yet</span>}
+    </Card>
+  );
+}
+
+function Acceptance({ esc, busy, act, role }) {
+  const [name, setName] = useState(role === "seller" ? "Global Machinery Ltd" : "");
   return (
     <Card title="Seller acceptance required" className="border-signal/30">
       <p className="mb-1 text-sm text-neutral-300">
@@ -416,13 +474,15 @@ function Acceptance({ esc, busy, act }) {
           Accept & lock funds
         </Button>
       </div>
+      {!name && <p className="mt-1 text-[10px] text-warn">Enter your name to enable acceptance — it goes in the audit trail.</p>}
     </Card>
   );
 }
 
 function Messages({ esc, busy, act, settled, role }) {
   const [author, setAuthor] = useState(
-    role === "buyer" ? "Bryn Industries" : role === "seller" ? "Global Machinery Ltd" : "");
+    role === "buyer" ? "Bryn Industries" : role === "seller" ? "Global Machinery Ltd"
+    : role === "arbitrator" ? "Arbitrator" : "");
   const [text, setText] = useState("");
   return (
     <Card title="Messages"
@@ -446,8 +506,12 @@ function Messages({ esc, busy, act, settled, role }) {
       )}
       {!settled && (
         <div className="flex gap-2">
+          {role ? (
+            <span className="flex w-32 items-center rounded-md border border-surface-line bg-surface px-2 text-xs text-neutral-400">{author}</span>
+          ) : (
           <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="Name"
             className="w-28 rounded-md border border-surface-line bg-surface p-2 text-xs text-neutral-200 outline-none focus:border-signal/50" />
+          )}
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message…"
             onKeyDown={(e) => { if (e.key === "Enter" && author && text) { act(() => api.sendMessage(esc.id, author, text), "Message sent"); setText(""); } }}
             className="flex-1 rounded-md border border-surface-line bg-surface p-2 text-xs text-neutral-200 outline-none focus:border-signal/50" />

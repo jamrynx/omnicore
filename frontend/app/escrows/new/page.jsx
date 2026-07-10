@@ -35,6 +35,10 @@ export default function CreateEscrow() {
   };
 
   const submit = async () => {
+    if (!window.confirm(
+      "Send this draft to the seller?\n\nThey will review and accept these exact terms. " +
+      "You can still revise the draft until they accept — after acceptance the contract is frozen."
+    )) return;
     setBusy(true); setErr(null);
     try {
       const payload = {
@@ -55,7 +59,7 @@ export default function CreateEscrow() {
           res = await api.createEscrow(payload);
         } else throw e;
       }
-      router.push(`/escrows/${res.escrow_id}`);
+      router.push(`/escrows/${res.escrow_id}?as=buyer`);
     } catch (e) {
       setErr(e.message); setBusy(false);
     }

@@ -61,7 +61,7 @@ Signed: Chen Ming, Lead Inspector, SGS`,
     name: "Customs_Certificate",
     label: "Customs Clearance Certificate",
     text: `EXPORT CUSTOMS CLEARANCE CERTIFICATE #CC-901
-Issued by Shanghai Customs, June 13, 2026
+Issued by Shanghai Customs, June 11, 2026
 Cargo: 100 crates GM-440 industrial lathe machines, contract SC-2026-0341
 Status: CLEARED FOR EXPORT`,
   },

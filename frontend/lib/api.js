@@ -29,6 +29,7 @@ export const api = {
     req("POST", "/compliance/preflight", { contract_text, description }),
   getEscrow: (id) => req("GET", `/escrows/${id}`),
   uploadDocument: (id, doc) => req("POST", `/escrows/${id}/documents`, doc),
+  reviseDraft: (id, p) => req("PUT", `/escrows/${id}/draft`, p),
   accept: (id, name) => req("POST", `/escrows/${id}/accept`, { accepted_by: name }),
   sendMessage: (id, author, text) => req("POST", `/escrows/${id}/messages`, { author, text }),
   removeDocument: (id, index) => req("DELETE", `/escrows/${id}/documents/${index}`),

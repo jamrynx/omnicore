@@ -13,12 +13,17 @@ Runs fully offline in mock mode until FIREWORKS_API_KEY is set (see app/ai.py).
 import hashlib
 import itertools
 
+from dotenv import load_dotenv
+
+load_dotenv()  # picks up backend/.env (FIREWORKS_API_KEY, OMNICORE_MODEL, ENGINE_URL)
+
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import engine_client as engine
-from .ai import mock_mode_active
+from .ai import AIError, mock_mode_active
+from . import forensics
 from .agents import (arbitration_agent, compliance_agent, contract_agent,
                      verification_agent)
 
@@ -86,6 +91,43 @@ async def create_escrow(body: CreateEscrow):
     return {"escrow_id": eid, "status": "DRAFT"}
 
 
+class ReviseDraft(BaseModel):
+    contract_text: str
+    amount_cents: int | None = None
+    description: str | None = None
+
+
+@app.put("/escrows/{eid}/draft")
+async def revise_draft(eid: str, body: ReviseDraft):
+    """Negotiation changed the terms? The buyer revises the draft; the seller
+    then accepts the NEW version. Only possible before acceptance — once
+    accepted, the contract is hash-frozen and can never change."""
+    esc = ESCROWS.get(eid)
+    if not esc:
+        raise HTTPException(404, "escrow not found")
+    if esc["status"] != "DRAFT":
+        raise HTTPException(400, "contract already accepted — the accepted text is "
+                                 "frozen; create a new escrow for new terms")
+    if not body.contract_text.strip():
+        raise HTTPException(400, "contract_text is required")
+    changes = []
+    if body.contract_text != esc["contract_text"]:
+        changes.append("contract text")
+        esc["contract_text"] = body.contract_text
+    if body.amount_cents is not None and body.amount_cents != esc["amount_cents"]:
+        if body.amount_cents <= 0:
+            raise HTTPException(400, "amount must be positive")
+        changes.append(f"amount -> {body.amount_cents}c")
+        esc["amount_cents"] = body.amount_cents
+    if body.description is not None and body.description != esc["description"]:
+        changes.append("description")
+        esc["description"] = body.description
+    if changes:
+        esc["timeline"].append({"event": "draft_revised",
+                                "detail": ", ".join(changes)})
+    return {"escrow_id": eid, "status": "DRAFT", "revised": changes}
+
+
 class AcceptContract(BaseModel):
     accepted_by: str  # seller's name — goes in the audit trail
 
@@ -104,7 +146,17 @@ async def accept_contract(eid: str, body: AcceptContract):
             esc["buyer_account"], esc["seller_account"], esc["amount_cents"]
         )
     except engine.EngineError as e:
-        raise HTTPException(400, str(e))
+        if "not found" in str(e):
+            # Fresh engine (demo accounts don't exist yet) — seed and retry once.
+            await _ensure_demo_accounts()
+            try:
+                locked = await engine.lock_funds(
+                    esc["buyer_account"], esc["seller_account"], esc["amount_cents"]
+                )
+            except engine.EngineError as e2:
+                raise HTTPException(400, str(e2))
+        else:
+            raise HTTPException(400, str(e))
     esc["engine"] = locked
     esc["status"] = "LOCKED"
     esc["accepted_by"] = body.accepted_by
@@ -240,12 +292,21 @@ async def upload_document_file(eid: str, file: UploadFile):
             text = raw.decode("utf-8", errors="replace").strip()
         except Exception:
             raise HTTPException(400, "unsupported file type — upload .pdf or .txt")
-    esc["documents"].append({"name": name, "text": text})
+    doc = {"name": name, "text": text}
+    if (file.filename or "").lower().endswith(".pdf"):
+        report = forensics.analyze_pdf(raw)
+        doc["forensics"] = report
+        if report["anomalies"]:
+            esc["timeline"].append({"event": "forensic_flags",
+                                    "detail": f"{name}: {len(report['anomalies'])} anomalies "
+                                              f"(risk {report['risk_score']})"})
+    esc["documents"].append(doc)
     _evidence_changed(esc)
     esc["timeline"].append({"event": "document_uploaded",
                             "detail": f"{name} ({file.filename})"})
     return {"documents": [d["name"] for d in esc["documents"]],
-            "extracted_chars": len(text)}
+            "extracted_chars": len(text),
+            "forensics": doc.get("forensics")}
 
 
 @app.post("/escrows/{eid}/review")
@@ -259,13 +320,16 @@ async def run_review(eid: str):
     if not esc["documents"]:
         raise HTTPException(400, "upload at least one document before review")
 
-    contract = await contract_agent.run(esc["contract_text"])
-    verification = await verification_agent.run(
-        contract.get("release_conditions", []), esc["documents"]
-    )
-    ruling = await arbitration_agent.run(contract, verification)
-    # Advisory only — compliance never routes the transaction.
-    compliance = await compliance_agent.run(contract, esc["documents"])
+    try:
+        contract = await contract_agent.run(esc["contract_text"])
+        verification = await verification_agent.run(
+            contract.get("release_conditions", []), esc["documents"]
+        )
+        ruling = await arbitration_agent.run(contract, verification)
+        # Advisory only — compliance never routes the transaction.
+        compliance = await compliance_agent.run(contract, esc["documents"])
+    except AIError as e:
+        raise HTTPException(502, f"AI provider error: {e}")
 
     esc["review"] = {
         "contract_analysis": contract,
@@ -397,8 +461,11 @@ async def compliance_preflight(body: PreflightRequest):
     """
     if not body.contract_text.strip():
         raise HTTPException(400, "contract_text is required")
-    contract = await contract_agent.run(body.contract_text)
-    compliance = await compliance_agent.run(contract, documents=[])
+    try:
+        contract = await contract_agent.run(body.contract_text)
+        compliance = await compliance_agent.run(contract, documents=[])
+    except AIError as e:
+        raise HTTPException(502, f"AI provider error: {e}")
     return {
         "contract_summary": contract.get("summary"),
         "parties": contract.get("parties"),
@@ -440,7 +507,7 @@ DEMO_DOCS = {
     "inspection": {"name": "Inspection_Report",
         "text": "INSPECTION REPORT #IR-5520 — PASSED\nInspector: SGS Shanghai | Date: June 11, 2026\nScope: 100 units GM-440 industrial lathes, contract SC-2026-0341\nResult: All 100 units conform to specification. PASSED.\nSigned: Chen Ming, Lead Inspector, SGS"},
     "customs": {"name": "Customs_Certificate",
-        "text": "EXPORT CUSTOMS CLEARANCE CERTIFICATE #CC-901\nIssued by Shanghai Customs, June 13, 2026\nCargo: 100 crates GM-440 industrial lathe machines, contract SC-2026-0341\nStatus: CLEARED FOR EXPORT"},
+        "text": "EXPORT CUSTOMS CLEARANCE CERTIFICATE #CC-901\nIssued by Shanghai Customs, June 11, 2026\nCargo: 100 crates GM-440 industrial lathe machines, contract SC-2026-0341\nStatus: CLEARED FOR EXPORT"},
 }
 
 
