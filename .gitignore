@@ -5,5 +5,3 @@ __pycache__/
 .env
 engine/engine
 build/
-docs/demo-script.md
-docs/docker-guide.md

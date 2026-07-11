@@ -5,7 +5,7 @@ FROM gcc:13 AS engine-build
 WORKDIR /src
 COPY engine/httplib.h engine/json.hpp ./
 COPY engine/src/ src/
-RUN g++ -std=c++20 -O2 -static-libstdc++ -o engine src/main.cpp -lpthread
+RUN g++ -std=c++20 -O2 -static-libstdc++ -static-libgcc -o engine src/main.cpp -lpthread
 
 FROM node:20-slim AS web-build
 WORKDIR /web

@@ -3,7 +3,7 @@ export const money = (cents) =>
   (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 export const STATUS = {
-  DRAFT: "bg-neutral-800 text-neutral-400 border border-dashed border-surface-line",
+  DRAFT:    { label: "Draft — awaiting acceptance", cls: "bg-neutral-800 text-neutral-400 border-dashed border-neutral-700" },
   LOCKED:   { label: "Funds locked",  cls: "bg-neutral-800 text-neutral-300 border-neutral-700" },
   RELEASE:  { label: "Ready to release", cls: "bg-signal/10 text-signal border-signal/40" },
   PENDING:  { label: "Pending evidence", cls: "bg-warn/10 text-warn border-warn/40" },

@@ -11,8 +11,12 @@ class EngineError(RuntimeError):
 
 
 async def _call(method: str, path: str, body: dict | None = None) -> dict:
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        r = await client.request(method, f"{ENGINE_URL}{path}", json=body)
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.request(method, f"{ENGINE_URL}{path}", json=body)
+    except httpx.HTTPError as e:
+        raise EngineError(f"escrow engine unreachable at {ENGINE_URL} — is the "
+                          f"engine service running? ({type(e).__name__})")
     data = r.json()
     if r.status_code >= 400:
         raise EngineError(data.get("error", f"engine returned {r.status_code}"))
