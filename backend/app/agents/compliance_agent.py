@@ -46,10 +46,13 @@ Return JSON with this shape:
 Keep advisories few and high-value. No filler."""
 
 
-async def run(contract_analysis: dict, documents: list[dict]) -> dict:
+async def run(contract_analysis: dict, documents: list[dict],
+              contract_text: str = "") -> dict:
     doc_names = [d["name"] for d in documents]
     user = (
-        "CONTRACT ANALYSIS:\n" + json.dumps(contract_analysis, indent=2) +
+        "CONTRACT TEXT (identify the parties' countries and corridor from here):\n"
+        + contract_text[:2000] +
+        "\n\nCONTRACT ANALYSIS:\n" + json.dumps(contract_analysis, indent=2) +
         "\n\nUPLOADED DOCUMENTS:\n" + json.dumps(doc_names, indent=2) +
         "\n\nDOCUMENT TEXTS (for dates):\n" +
         "\n".join(f"--- {d['name']} ---\n{d['text'][:800]}" for d in documents)

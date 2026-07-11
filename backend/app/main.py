@@ -327,7 +327,8 @@ async def run_review(eid: str):
         )
         ruling = await arbitration_agent.run(contract, verification)
         # Advisory only — compliance never routes the transaction.
-        compliance = await compliance_agent.run(contract, esc["documents"])
+        compliance = await compliance_agent.run(contract, esc["documents"],
+                                                contract_text=esc["contract_text"])
     except AIError as e:
         raise HTTPException(502, f"AI provider error: {e}")
 
@@ -463,7 +464,8 @@ async def compliance_preflight(body: PreflightRequest):
         raise HTTPException(400, "contract_text is required")
     try:
         contract = await contract_agent.run(body.contract_text)
-        compliance = await compliance_agent.run(contract, documents=[])
+        compliance = await compliance_agent.run(contract, documents=[],
+                                            contract_text=body.contract_text)
     except AIError as e:
         raise HTTPException(502, f"AI provider error: {e}")
     return {
