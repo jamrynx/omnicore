@@ -9,6 +9,7 @@ export const STATUS = {
   PENDING:  { label: "Pending evidence", cls: "bg-warn/10 text-warn border-warn/40" },
   DISPUTE:  { label: "Dispute",       cls: "bg-danger/10 text-danger border-danger/40" },
   RELEASED: { label: "Released",      cls: "bg-signal/15 text-signal border-signal/50" },
+  SETTLED_PARTIAL: { label: "Settled — partial", cls: "bg-signal/10 text-signal border-signal/30" },
   REFUNDED: { label: "Refunded",      cls: "bg-sky-400/10 text-sky-300 border-sky-400/40" },
 };
 

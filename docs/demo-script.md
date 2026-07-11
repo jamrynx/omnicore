@@ -42,7 +42,11 @@ settle. Say once: "Role views for the demo — production has real accounts."
 - Show blocked auto-release, then the case file: "— it prepares the case:
   the conflict, the evidence, the explanation. The human arbitrator starts
   at 90% done."
-- Rule as arbitrator with a resolution note → settled, in the audit trail.
+- Rule as arbitrator — and use the PARTIAL option: type 200000 in the
+  partial field ("80 of 100 units received, pro-rata settlement") →
+  "$200,000 to seller, $50,000 refunded" in ONE atomic engine operation.
+  Say: "The AI found the conflict; the human decided the fairness;
+  the engine did the math exactly."
 
 ## 2:45–3:15 — Architecture (diagram or README)
 "Three parts, separated on purpose. AI agents — running on open models

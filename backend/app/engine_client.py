@@ -41,6 +41,16 @@ async def release_funds(escrow_id: str) -> dict:
     return await _call("POST", f"/escrows/{escrow_id}/release")
 
 
+async def settle_partial(escrow_id: str, release_cents: int) -> dict:
+    return await _call("POST", f"/escrows/{escrow_id}/settle",
+                       {"release_cents": release_cents})
+
+
+async def deposit(account_id: str, cents: int) -> dict:
+    return await _call("POST", f"/accounts/{account_id}/deposit",
+                       {"amount_cents": cents})
+
+
 async def refund_buyer(escrow_id: str) -> dict:
     return await _call("POST", f"/escrows/{escrow_id}/refund")
 

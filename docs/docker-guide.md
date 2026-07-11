@@ -16,25 +16,25 @@ The judging pipeline pulls a PUBLIC image (linux/amd64) and runs it.
 
 ```powershell
 # 1. Build the all-in-one image (from project root; note the final dot)
-docker build -t ghcr.io/YOURGITHUBUSER/omnicore:v1 .
+docker build -t ghcr.io/jamrynx/omnicore:v2 .
 
 # 2. Cold-test it exactly as judges will run it
-docker run --rm -p 3000:3000 -p 8000:8000 -e FIREWORKS_API_KEY=fw_yourkey ghcr.io/YOURGITHUBUSER/omnicore:v1
+docker run --rm -p 3000:3000 -p 8000:8000 -e FIREWORKS_API_KEY=fw_here OMNICORE_MODEL=accounts/fireworks/models/gpt-oss-120b ghcr.io/jamrynx/omnicore:v2
 #    -> open http://localhost:3000, run one scenario end to end
 
 # 3. Log in to GitHub Container Registry
 #    First create a token: github.com -> Settings -> Developer settings ->
 #    Personal access tokens (classic) -> scopes: write:packages
-docker login ghcr.io -u YOURGITHUBUSER    # password = that token
+docker login ghcr.io -u jamrynx    # password = that token
 
 # 4. Push
-docker push ghcr.io/YOURGITHUBUSER/omnicore:v1
+docker push ghcr.io/jamrynx/omnicore:v2
 
 # 5. Make it PUBLIC: github.com -> your profile -> Packages -> omnicore ->
 #    Package settings -> Change visibility -> Public
 ```
 
-Submission field value: `ghcr.io/YOURGITHUBUSER/omnicore:v1`
+Submission field value: `ghcr.io/jamrynx/omnicore:v2`
 (exact string, no https://, tag included)
 
 ## Demoing Docker in the video

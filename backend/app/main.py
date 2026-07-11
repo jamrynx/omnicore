@@ -53,6 +53,7 @@ class UploadDocument(BaseModel):
 class Approve(BaseModel):
     approved_by: str          # arbitrator/approver name — goes in the audit trail
     resolution_note: str = ""  # arbitrator's reasoning for dispute rulings
+    release_cents: int | None = None  # partial ruling: this much to seller, rest refunds
 
 
 @app.get("/health")
@@ -404,6 +405,31 @@ async def release(eid: str, body: Approve | None = None):
                  "auto-release threshold — human approval required",
         )
 
+    partial = body.release_cents if body else None
+    if partial is not None:
+        if not human:
+            raise HTTPException(403, "partial settlements require a named arbitrator")
+        if not (0 < partial < esc["amount_cents"]):
+            raise HTTPException(400, "partial amount must be between 0 and the escrow amount")
+        try:
+            settled = await engine.settle_partial(esc["engine"]["id"], partial)
+        except engine.EngineError as e:
+            raise HTTPException(400, str(e))
+        esc["released"] = True
+        esc["engine"] = settled
+        esc["status"] = "SETTLED_PARTIAL"
+        esc["timeline"].append({
+            "event": "settled_partially",
+            "detail": {"by": human,
+                       "released_cents": settled.get("released_cents"),
+                       "refunded_cents": settled.get("refunded_cents"),
+                       "resolution_note": body.resolution_note or None},
+        })
+        return {"escrow_id": eid, "status": "SETTLED_PARTIAL",
+                "released_cents": settled.get("released_cents"),
+                "refunded_cents": settled.get("refunded_cents"),
+                "released_by": human}
+
     try:
         settled = await engine.release_funds(esc["engine"]["id"])
     except engine.EngineError as e:
@@ -477,6 +503,27 @@ async def compliance_preflight(body: PreflightRequest):
         "advisories": compliance.get("advisories", []),
         "disclaimer": compliance.get("disclaimer"),
     }
+
+
+@app.get("/accounts/{account_id}")
+async def get_account(account_id: str):
+    try:
+        return await engine.get_account(account_id)
+    except engine.EngineError as e:
+        raise HTTPException(404, str(e))
+
+
+class Deposit(BaseModel):
+    amount_cents: int
+
+
+@app.post("/accounts/{account_id}/deposit")
+async def deposit(account_id: str, body: Deposit):
+    """Demo funding — in production this is the banking-partner rail."""
+    try:
+        return await engine.deposit(account_id, body.amount_cents)
+    except engine.EngineError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/demo/seed")

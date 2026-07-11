@@ -102,6 +102,7 @@ export default function EscrowDetail() {
           )}
         </div>
         <div className="flex flex-col gap-6 lg:col-span-2">
+          {role === "buyer" && <Wallet accountId={esc.buyer_account} busy={busy} act={act} />}
           <Actions esc={esc} ruling={ruling} busy={busy} act={act} settled={settled} draft={draft} role={role} />
           {esc.case_file && <CaseFile cf={esc.case_file} />}
           <Timeline items={esc.timeline} />
@@ -299,9 +300,11 @@ function Agent({ name, note, conf }) {
 function Actions({ esc, ruling, busy, act, settled, draft, role }) {
   const id = esc.id;
   const [reviewing, setReviewing] = useState(false);
-  const [who, setWho] = useState("");
+  const [who, setWho] = useState(role === "arbitrator" ? "Arbitrator" : "");
   const [note, setNote] = useState("");
+  const [partial, setPartial] = useState("");
   const needsHuman = ruling && !ruling.auto_release_eligible;
+  const partialCents = partial ? Math.round(parseFloat(partial) * 100) : null;
   if (draft) return (
     <Card title="Actions">
       <p className="text-sm text-neutral-500">Waiting for the seller to review and accept the contract. Funds lock at acceptance.</p>
@@ -375,10 +378,19 @@ function Actions({ esc, ruling, busy, act, settled, draft, role }) {
                   className="rounded-md border border-surface-line bg-surface-raised p-2 text-sm text-neutral-200 outline-none focus:border-signal/50" />
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Resolution note (recorded in audit trail)"
                   className="rounded-md border border-surface-line bg-surface-raised p-2 text-xs text-neutral-300 outline-none focus:border-signal/50" />
+                <div>
+                  <label className="mb-1 block text-[10px] text-neutral-500">
+                    Partial ruling (optional): amount to seller in USD — the remainder refunds the buyer
+                  </label>
+                  <input value={partial} onChange={(e) => setPartial(e.target.value)} type="number"
+                    placeholder={`e.g. ${(esc.amount_cents / 100 * 0.8).toFixed(0)} for 80% of goods received`}
+                    className="w-full rounded-md border border-surface-line bg-surface-raised p-2 text-sm text-neutral-200 outline-none focus:border-signal/50" />
+                </div>
                 <div className="flex gap-2">
                   <Button disabled={busy || !who}
-                    onClick={() => act(() => api.release(id, who, note), "Arbitrator released funds")}>
-                    Release to seller
+                    onClick={() => act(() => api.release(id, who, note, partialCents),
+                      partialCents ? "Arbitrator ruled a partial settlement" : "Arbitrator released funds")}>
+                    {partialCents ? `Release ${partial} to seller, refund rest` : "Release to seller"}
                   </Button>
                   <Button kind="danger" disabled={busy || !who}
                     onClick={() => act(() => api.refund(id, who, note), "Arbitrator refunded buyer")}>
@@ -447,6 +459,33 @@ function ReviseDraft({ esc, busy, act }) {
         Update draft
       </Button>
       {!dirty && <span className="ml-3 text-[10px] text-neutral-600">no changes yet</span>}
+    </Card>
+  );
+}
+
+function Wallet({ accountId, busy, act }) {
+  const [acc, setAcc] = useState(null);
+  const load = useCallback(() => api.getAccount(accountId).then(setAcc).catch(() => {}), [accountId]);
+  useEffect(() => { load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
+  if (!acc) return null;
+  return (
+    <Card title="Your wallet" right={<span className="text-[10px] text-neutral-600">{acc.id}</span>}>
+      <div className="mb-3 flex items-end justify-between">
+        <div>
+          <div className="text-xl font-semibold tabular-nums text-signal">{money(acc.available_cents)}</div>
+          <div className="text-xs text-neutral-500">available</div>
+        </div>
+        <div className="text-right">
+          <div className="text-sm tabular-nums text-neutral-300">{money(acc.locked_cents)}</div>
+          <div className="text-xs text-neutral-500">locked in escrow</div>
+        </div>
+      </div>
+      <Button kind="ghost" disabled={busy}
+        onClick={() => act(async () => { await api.deposit(accountId, 10000000); load(); },
+                           "Deposited $100,000 (demo funds)")}>
+        + Add $100,000 demo funds
+      </Button>
+      <p className="mt-2 text-[10px] text-neutral-600">In production, funding arrives via the licensed banking partner.</p>
     </Card>
   );
 }

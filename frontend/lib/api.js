@@ -42,7 +42,10 @@ export const api = {
     return data;
   },
   runReview: (id) => req("POST", `/escrows/${id}/review`),
-  release: (id, approvedBy, note) =>
+  release: (id, approvedBy, note, releaseCents) =>
     req("POST", `/escrows/${id}/release`,
-        approvedBy ? { approved_by: approvedBy, resolution_note: note || "" } : undefined),
+        approvedBy ? { approved_by: approvedBy, resolution_note: note || "",
+                       release_cents: releaseCents ?? null } : undefined),
+  getAccount: (id) => req("GET", `/accounts/${id}`),
+  deposit: (id, cents) => req("POST", `/accounts/${id}/deposit`, { amount_cents: cents }),
 };

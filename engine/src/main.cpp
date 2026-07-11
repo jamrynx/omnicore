@@ -22,13 +22,14 @@ using json = nlohmann::json;
 // Domain types
 // ---------------------------------------------------------------------------
 
-enum class EscrowState { Locked, Released, Refunded };
+enum class EscrowState { Locked, Released, Refunded, SettledPartial };
 
 static const char* to_string(EscrowState s) {
     switch (s) {
         case EscrowState::Locked:   return "LOCKED";
         case EscrowState::Released: return "RELEASED";
         case EscrowState::Refunded: return "REFUNDED";
+        case EscrowState::SettledPartial: return "SETTLED_PARTIAL";
     }
     return "UNKNOWN";
 }
@@ -121,6 +122,42 @@ public:
     // RefundBuyer: buyer locked -> buyer available. Terminal.
     json refund_buyer(const std::string& escrow_id, std::string& err) {
         return settle_(escrow_id, /*to_seller=*/false, err);
+    }
+
+    // SettlePartial: arbitrator's split ruling. release_cents -> seller,
+    // the remainder -> buyer. Atomic, terminal, audited.
+    json settle_partial(const std::string& escrow_id, int64_t release_cents,
+                        std::string& err) {
+        std::unique_lock lock(mu_);
+        auto it = escrows_.find(escrow_id);
+        if (it == escrows_.end()) { err = "escrow not found"; return {}; }
+        Escrow& e = it->second;
+        if (e.state != EscrowState::Locked) {
+            err = std::string("escrow already settled (") + to_string(e.state) + ")";
+            return {};
+        }
+        if (release_cents <= 0 || release_cents >= e.amount_cents) {
+            err = "partial release must be between 0 and the escrow amount "
+                  "(use release/refund for full settlements)";
+            return {};
+        }
+        auto* buyer  = find_(e.buyer_id);
+        auto* seller = find_(e.seller_id);
+        if (!buyer || !seller) { err = "ledger corruption: party missing"; return {}; }
+
+        int64_t refund_cents = e.amount_cents - release_cents;
+        buyer->locked_cents     -= e.amount_cents;
+        seller->available_cents += release_cents;
+        buyer->available_cents  += refund_cents;
+        e.state = EscrowState::SettledPartial;
+        e.settled_at = now_();
+        audit_("SETTLE_PARTIAL", e.id,
+               std::to_string(release_cents) + "c -> " + e.seller_id + ", " +
+               std::to_string(refund_cents) + "c refunded -> " + e.buyer_id);
+        json out = escrow_json_(e);
+        out["released_cents"] = release_cents;
+        out["refunded_cents"] = refund_cents;
+        return out;
     }
 
     json get_escrow(const std::string& escrow_id, std::string& err) {
@@ -277,6 +314,15 @@ int main(int argc, char** argv) {
     srv.Post("/escrows/:id/release", [&](const httplib::Request& req, httplib::Response& res) {
         std::string err;
         auto out = ledger.release_funds(req.path_params.at("id"), err);
+        err.empty() ? reply(res, out) : fail(res, err);
+    });
+
+    srv.Post("/escrows/:id/settle", [&](const httplib::Request& req, httplib::Response& res) {
+        auto b = json::parse(req.body, nullptr, false);
+        if (b.is_discarded() || !b.contains("release_cents"))
+            return fail(res, "expected {release_cents}");
+        std::string err;
+        auto out = ledger.settle_partial(req.path_params.at("id"), b["release_cents"], err);
         err.empty() ? reply(res, out) : fail(res, err);
     });
 

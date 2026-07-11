@@ -14,7 +14,7 @@ routes every escrow to one of three outcomes:
 |---|---|---|
 | **RELEASE** | All conditions evidenced, documents consistent | Auto-settles through the C++ engine (confidence ≥ 90%) |
 | **PENDING** | Nothing wrong — evidence missing | Stays locked; the missing documents are requested |
-| **DISPUTE** | Documents conflict with each other or the contract | Stays locked; the AI prepares a full case file for a human arbitrator |
+| **DISPUTE** | Documents conflict with each other or the contract | Stays locked; the AI prepares a full case file for a human arbitrator, who can release, refund, or rule a **partial settlement** (e.g. 80 of 100 units received → $200,000 to the seller, $50,000 back to the buyer — one atomic engine operation) |
 
 AI handles the easy 95%. Humans rule the hard cases — and they start at
 90% done, because the AI has already assembled the evidence, the
@@ -48,7 +48,10 @@ Built solo in six days for the AMD Developer Hackathon: ACT II
 5. **Settlement.** RELEASE at ≥90% settles automatically. Anything else
    needs a named human — and on a dispute, the arbitrator gets the case
    file: conditions, discrepancies, documents, and the message
-   transcript as evidence.
+   transcript as evidence. The ruling can be full release, full refund,
+   or a partial split — the engine settles all three atomically. Buyers
+   hold a visible wallet (available vs locked), funded in the demo with
+   one click; in production, via the licensed banking partner.
 
 ## What about fake documents?
 
@@ -149,8 +152,9 @@ in order:
    engineering specs for procurement; coverage and CVE ceilings for
    software) with machine-readable remediation terms — partial-delivery
    pro-rata math, late penalties — so most disputes become impossible by
-   construction, and the arbitration agent can *compute* a suggested
-   settlement instead of only describing the conflict.
+   construction, and the arbitration agent can *compute* the suggested
+   split for the arbitrator to confirm — the engine already executes
+   partial settlements today; the roadmap makes the math automatic.
 6. **Forensics, deepened** — issuer-side verification and cryptographic
    document provenance.
 
