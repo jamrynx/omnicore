@@ -1,0 +1,22 @@
+# OmniCore — the whole stack with one command:  docker compose up --build
+# Engine and API start and stop TOGETHER (fixes the in-memory split-brain).
+services:
+  engine:
+    build: ./engine
+    ports: ["7070:7070"]
+
+  api:
+    build: ./backend
+    environment:
+      ENGINE_URL: http://engine:7070
+      # Set FIREWORKS_API_KEY here (or in a .env file next to this compose
+      # file) to switch from mock mode to live models:
+      FIREWORKS_API_KEY: ${FIREWORKS_API_KEY:-}
+      OMNICORE_MODEL: ${OMNICORE_MODEL:-}
+    ports: ["8000:8000"]
+    depends_on: [engine]
+
+  web:
+    build: ./frontend
+    ports: ["3000:3000"]
+    depends_on: [api]

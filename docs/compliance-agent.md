@@ -85,3 +85,12 @@ Corridor requirements are unstructured, jurisdiction-specific, and change —
 exactly the kind of messy-knowledge reasoning you run on LLMs rather than
 hardcode. It adds a fourth agent to the network with distinct, explainable
 responsibility.
+
+## Related roadmap: guided contract builder
+
+Structured escrow creation — a guided form (parties, goods, quantities,
+minimum-acceptable-quantity terms, deadlines, required evidence per
+corridor) that GENERATES the contract document, downloadable by both
+parties. Makes most disputes impossible by construction and gives the
+agents machine-readable terms. Free-text contract paste remains supported —
+the harder demo — but structured creation is the product default later.
